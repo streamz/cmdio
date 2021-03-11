@@ -1,0 +1,253 @@
+// +build linux
+
+/*
+Copyright © 2020 streamz <bytecodenerd@gmail.com>
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package cmdio
+
+import (
+	"io"
+	"os"
+	"os/exec"
+	"os/user"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/golang/glog"
+)
+
+type noCopy struct{}
+
+func (*noCopy) Lock()   {}
+func (*noCopy) Unlock() {}
+
+type Options struct {
+	In  io.Reader
+	Out io.Writer
+	Err io.Writer
+	Usr *user.User
+}
+
+// Info -
+type Info struct {
+	Error 	 error
+	RunT 	 time.Duration
+	Pid 	 int
+	Exit 	 int
+	StartT 	 int64
+	EndT 	 int64
+	Finished bool
+	Signaled bool
+}
+
+type status int
+
+const (
+	_uninitialized status = iota
+	_exited
+	_running
+	_signaled
+)
+
+// Cmd -
+type CmdIo struct {
+	in  io.Reader
+	out io.Writer
+	err io.Writer
+	lok *sync.Mutex
+	usr *user.User
+	ini *sync.Once
+	sta status
+	inf Info
+	str time.Time
+	ech chan Info
+	sch chan bool
+	syn chan struct{}
+	ncp noCopy
+}
+
+// New - creates a new CmdIo
+func New(optFn func()*Options) *CmdIo {
+	opts := optFn()
+	usr := opts.Usr
+	if usr == nil {
+		usr, _ = user.Current()
+	}
+	return &CmdIo{
+		in:  opts.In,
+		out: opts.Out,
+		err: opts.Err,
+		usr: usr,
+		lok: &sync.Mutex{},
+		ini: &sync.Once{},
+		inf: Info{Pid: 0, Exit: -1},
+		sta: _uninitialized,
+		ech: make(chan Info, 1),
+		sch: make(chan bool, 1),
+		syn: make(chan struct{}),
+	}
+}
+
+// Start - asynchronously starts a command
+func (c *CmdIo) Start(name string, args ...string) (<-chan bool, <-chan Info) {
+	c.ini.Do(func() {
+		glog.Infof("running cmd: %s %s", name, strings.Join(args, " "))
+		go c.runFn(name, args...)
+	})
+	return c.sch, c.ech
+}
+
+// Run - synchronously runs a command
+func (c *CmdIo) Run(name string, args ...string) *Info {
+	glog.Infof("running cmd: %s %s", name, strings.Join(args, " "))
+	_, complete := c.Start(name, args...)
+	info := <-complete
+	return &info
+}
+
+// Terminate - kills a command
+func (c *CmdIo) Terminate() error {
+	c.lok.Lock()
+	defer c.lok.Unlock()
+
+	if c.sta == _uninitialized || c.inf.Finished {
+		return nil
+	}
+
+	c.sta = _signaled
+	c.inf.Signaled = true
+	return syscall.Kill(-c.inf.Pid, syscall.SIGTERM)
+}
+
+// Info - returns a copy of the current state of a command
+func (c *CmdIo) Info() Info {
+	c.lok.Lock()
+	defer c.lok.Unlock()
+
+	switch c.sta {
+	case _running:
+		c.inf.RunT = time.Now().Sub(c.str)
+	case _exited:
+		c.inf.Finished = true
+	}
+	return c.inf
+}
+
+// Join -
+func (c *CmdIo) Join() <-chan struct{} {
+	return c.syn
+}
+
+func (c *CmdIo) runFn(name string, args ...string) {
+	defer func() {
+		c.ech <- c.Info()
+		close(c.syn)
+	}()
+
+	cmd := c.newCmd(name, args...)
+	now := time.Now()
+
+	if e := cmd.Start(); e != nil {
+		c.complete(&now, e)
+		c.sch <- false
+		return
+	}
+
+	c.init(&now, cmd)
+	c.sch <- true
+	e := cmd.Wait()
+	c.complete(&now, e)
+}
+
+func (c *CmdIo) newCmd(name string, args ...string) *exec.Cmd {
+	uid, _ := strconv.Atoi(c.usr.Uid)
+	gid, _ := strconv.Atoi(c.usr.Gid)
+
+	cred := &syscall.Credential{
+		Uid: uint32(uid),
+		Gid: uint32(gid),
+		NoSetGroups: true,
+	}
+
+	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: cred,
+		Setpgid:    true,
+	}
+
+	cmd.Env = os.Environ()
+	cmd.Dir = os.Getenv("PWD")
+
+	// wire IO
+	cmd.Stdin = os.Stdin
+	if c.in != nil && c.in != os.Stdin {
+		cmd.Stdin = c.in
+	}
+	cmd.Stdout = os.Stdout
+	if c.out != nil && c.out != os.Stdout {
+		cmd.Stdout = io.MultiWriter(c.out, os.Stdout)
+	}
+	cmd.Stderr = os.Stderr
+	if c.err != nil && c.err != os.Stderr {
+		cmd.Stderr = io.MultiWriter(c.err, os.Stderr)
+	}
+	return cmd
+}
+
+func (c *CmdIo) init(t *time.Time, cmd *exec.Cmd) {
+	c.lok.Lock()
+	defer c.lok.Unlock()
+
+	c.inf.Pid = cmd.Process.Pid
+	c.inf.StartT = t.UnixNano()
+	c.sta = _running
+}
+
+func (c *CmdIo) complete(t *time.Time, err error) {
+	code := 0
+	if err != nil {
+		code = exitErr(err)
+	}
+	c.endState(t, code, err)
+}
+
+func (c *CmdIo) endState(t *time.Time, code int, err error) {
+	c.lok.Lock()
+	defer c.lok.Unlock()
+
+	c.inf.Error = err
+	c.inf.Exit = code
+	c.inf.StartT = t.UnixNano()
+	c.inf.EndT = time.Now().UnixNano()
+	if c.sta != _signaled {
+		c.inf.Finished = true
+		c.sta = _exited
+	}
+}
+
+func exitErr(err error) int {
+	if e, ok := err.(*exec.ExitError); ok {
+		ws := e.Sys().(syscall.WaitStatus)
+		if sig := ws.Signal(); sig > 0 {
+			return int(sig)
+		}
+		return ws.ExitStatus()
+	}
+	return 0
+}
