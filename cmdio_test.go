@@ -1,5 +1,3 @@
-// +build linux
-
 /*
 Copyright © 2020 streamz <bytecodenerd@gmail.com>
 
