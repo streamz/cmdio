@@ -57,6 +57,7 @@ func stdOptions() *Options {
 		In:  os.Stdin,
 		Out: os.Stdout,
 		Err: os.Stderr,
+		Env: append([]string{"CMDIO_TEST=running test"}, os.Environ()...),
 		Usr: usr,
 	}
 }

@@ -39,6 +39,7 @@ type Options struct {
 	In  io.Reader
 	Out io.Writer
 	Err io.Writer
+	Env []string
 	Usr *user.User
 }
 
@@ -63,11 +64,12 @@ const (
 	_signaled
 )
 
-// Cmd -
+// CmdIo -
 type CmdIo struct {
 	in  io.Reader
 	out io.Writer
 	err io.Writer
+	env []string
 	lok *sync.Mutex
 	usr *user.User
 	ini *sync.Once
@@ -91,6 +93,7 @@ func New(optFn func()*Options) *CmdIo {
 		in:  opts.In,
 		out: opts.Out,
 		err: opts.Err,
+		env: opts.Env,
 		usr: usr,
 		lok: &sync.Mutex{},
 		ini: &sync.Once{},
@@ -160,7 +163,6 @@ func (c *CmdIo) runFn(name string, args ...string) {
 
 	cmd := c.newCmd(name, args...)
 	now := time.Now()
-
 	if e := cmd.Start(); e != nil {
 		c.complete(&now, e)
 		c.sch <- false
@@ -190,6 +192,9 @@ func (c *CmdIo) newCmd(name string, args ...string) *exec.Cmd {
 	}
 
 	cmd.Env = os.Environ()
+	if len(c.env) > 0 {
+		cmd.Env = c.env
+	}
 	cmd.Dir = os.Getenv("PWD")
 
 	// wire IO
