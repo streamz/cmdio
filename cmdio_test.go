@@ -23,7 +23,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -32,7 +31,7 @@ import (
 
 var (
 	_, b, _, _ = runtime.Caller(0)
-	Testdata   = strings.TrimSuffix(filepath.Dir(b), "/exe") + "/testdata/"
+	Testdata   = filepath.Dir(b) + "/testdata/"
 )
 
 type stringReader struct {
