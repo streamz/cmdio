@@ -101,6 +101,14 @@ func TestRun(t *testing.T) {
 	assert.NoError(t, info.Error)
 }
 
+func TestReRun(t *testing.T) {
+	cmd := New(stdOptions)
+	info := cmd.Run(Testdata + "program.sh")
+	assert.NoError(t, info.Error)
+	info = cmd.Run(Testdata + "program.sh")
+	assert.Error(t, info.Error)
+}
+
 func TestStart(t *testing.T) {
 	info := start("program.sh", stdOptions)
 	assertStart(t, info)

@@ -17,6 +17,7 @@ limitations under the License.
 package cmdio
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -107,16 +108,29 @@ func New(optFn func()*Options) *CmdIo {
 
 // Start - asynchronously starts a command
 func (c *CmdIo) Start(name string, args ...string) (<-chan bool, <-chan Info) {
+	init := false
 	c.ini.Do(func() {
 		glog.Infof("running cmd: %s %s", name, strings.Join(args, " "))
+		init = true
 		go c.runFn(name, args...)
 	})
+	if !init {
+		c.ech <- Info{
+			Error:    errors.New("already executed, can not reuse CmdIo"),
+			RunT:     0,
+			Pid:      0,
+			Exit:     0,
+			StartT:   0,
+			EndT:     0,
+			Finished: true,
+			Signaled: false,
+		}
+	}
 	return c.sch, c.ech
 }
 
 // Run - synchronously runs a command
 func (c *CmdIo) Run(name string, args ...string) *Info {
-	glog.Infof("running cmd: %s %s", name, strings.Join(args, " "))
 	_, complete := c.Start(name, args...)
 	info := <-complete
 	return &info
