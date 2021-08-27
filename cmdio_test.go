@@ -65,7 +65,7 @@ func bufOptions(in io.Reader, out, err io.Writer) func() *Options {
 	usr, _ := user.Current()
 	return func() *Options {
 		return &Options{
-			In: in,
+			In:  in,
 			Out: out,
 			Err: err,
 			Usr: usr,
@@ -83,7 +83,7 @@ func start(script string, optFn func() *Options) *Info {
 	return &info
 }
 
-func terminate(script string, optFn func() *Options) (*Info, error){
+func terminate(script string, optFn func() *Options) (*Info, error) {
 	cmd := New(optFn)
 	started, ctx := cmd.Start(Testdata + script)
 	<-started
@@ -122,14 +122,14 @@ func TestTerminate(t *testing.T) {
 
 func TestStartBufIO(t *testing.T) {
 	expected := "hello world\n"
-	in := stringReader {
+	in := stringReader{
 		step: 0,
 		data: []string{expected},
 	}
 	out := bytes.NewBufferString("")
 	err := bytes.NewBufferString("")
 	cmd := New(bufOptions(in, out, err))
-	info := cmd.Run(Testdata + "io.sh", "-")
+	info := cmd.Run(Testdata+"io.sh", "-")
 	assert.NoError(t, info.Error)
 	assert.Equal(t, expected, out.String())
 	assert.Equal(t, expected, err.String())
