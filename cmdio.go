@@ -23,12 +23,9 @@ import (
 	"os/exec"
 	"os/user"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/golang/glog"
 )
 
 type noCopy struct{}
@@ -46,12 +43,12 @@ type Options struct {
 
 // Info -
 type Info struct {
-	Error 	 error
-	RunT 	 time.Duration
-	Pid 	 int
-	Exit 	 int
-	StartT 	 int64
-	EndT 	 int64
+	Error    error
+	RunT     time.Duration
+	Pid      int
+	Exit     int
+	StartT   int64
+	EndT     int64
 	Finished bool
 	Signaled bool
 }
@@ -84,7 +81,7 @@ type CmdIo struct {
 }
 
 // New - creates a new CmdIo
-func New(optFn func()*Options) *CmdIo {
+func New(optFn func() *Options) *CmdIo {
 	opts := optFn()
 	usr := opts.Usr
 	if usr == nil {
@@ -110,7 +107,6 @@ func New(optFn func()*Options) *CmdIo {
 func (c *CmdIo) Start(name string, args ...string) (<-chan bool, <-chan Info) {
 	init := false
 	c.ini.Do(func() {
-		glog.Infof("running cmd: %s %s", name, strings.Join(args, " "))
 		init = true
 		go c.runFn(name, args...)
 	})
@@ -194,15 +190,15 @@ func (c *CmdIo) newCmd(name string, args ...string) *exec.Cmd {
 	gid, _ := strconv.Atoi(c.usr.Gid)
 
 	cred := &syscall.Credential{
-		Uid: uint32(uid),
-		Gid: uint32(gid),
+		Uid:         uint32(uid),
+		Gid:         uint32(gid),
 		NoSetGroups: true,
 	}
 
 	cmd := exec.Command(name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Credential: cred,
-		Setpgid:    true,
+		Setsid:     true,
 	}
 
 	cmd.Env = os.Environ()
