@@ -196,16 +196,6 @@ func (c *CmdIo) newCmd(name string, args ...string) *exec.Cmd {
 	}
 
 	cmd := exec.Command(name, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: cred,
-		Setsid:     true,
-	}
-
-	cmd.Env = os.Environ()
-	if len(c.env) > 0 {
-		cmd.Env = c.env
-	}
-	cmd.Dir = os.Getenv("PWD")
 
 	// wire IO
 	cmd.Stdin = os.Stdin
@@ -220,6 +210,19 @@ func (c *CmdIo) newCmd(name string, args ...string) *exec.Cmd {
 	if c.err != nil && c.err != os.Stderr {
 		cmd.Stderr = io.MultiWriter(c.err, os.Stderr)
 	}
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: cred,
+		Setsid:     true,
+		Pdeathsig:  syscall.SIGKILL,
+	}
+
+	cmd.Env = os.Environ()
+	if len(c.env) > 0 {
+		cmd.Env = c.env
+	}
+	cmd.Dir = os.Getenv("PWD")
+
 	return cmd
 }
 
