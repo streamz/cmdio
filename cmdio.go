@@ -108,6 +108,7 @@ func (c *CmdIo) Start(name string, args ...string) (<-chan bool, <-chan Info) {
 	init := false
 	c.ini.Do(func() {
 		init = true
+		go signalHandler()
 		go c.runFn(name, args...)
 	})
 	if !init {
@@ -196,6 +197,7 @@ func (c *CmdIo) newCmd(name string, args ...string) *exec.Cmd {
 	}
 
 	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = syscallAttrs(cred)
 
 	// wire IO
 	cmd.Stdin = os.Stdin
@@ -211,17 +213,11 @@ func (c *CmdIo) newCmd(name string, args ...string) *exec.Cmd {
 		cmd.Stderr = io.MultiWriter(c.err, os.Stderr)
 	}
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: cred,
-		Setsid:     true,
-		Pdeathsig:  syscall.SIGKILL,
-	}
-
+	cmd.Dir = os.Getenv("PWD")
 	cmd.Env = os.Environ()
 	if len(c.env) > 0 {
 		cmd.Env = c.env
 	}
-	cmd.Dir = os.Getenv("PWD")
 
 	return cmd
 }
