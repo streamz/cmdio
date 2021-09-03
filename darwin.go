@@ -30,9 +30,9 @@ import (
 
 // Copyright (c) 2014 Mitchell Hashimoto
 const (
-	ctrlKern = 1
-	kernProc = 14
-	kernProcAll = 0
+	ctrlKern        = 1
+	kernProc        = 14
+	kernProcAll     = 0
 	kinfoStructSize = 648
 )
 
@@ -110,7 +110,6 @@ func children(ppid int) ([]int, error) {
 
 // end Copyright (c) 2014 Mitchell Hashimoto
 
-
 func syscallAttrs(cred *syscall.Credential) *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{
 		Credential: cred,
@@ -135,7 +134,3 @@ func killChildren() {
 		}
 	}
 }
-
-
-
-
