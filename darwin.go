@@ -130,7 +130,7 @@ func killChildren() {
 	ch, e := children(os.Getpid())
 	if e == nil {
 		for _, pid := range ch {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
 		}
 	}
 }
