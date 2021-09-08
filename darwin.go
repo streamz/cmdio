@@ -117,20 +117,22 @@ func syscallAttrs(cred *syscall.Credential) *syscall.SysProcAttr {
 	}
 }
 
+// TODO: Pass ALL signals to child pids
 func signalHandler() {
-	c := make(chan os.Signal)
-	signal.Notify(c, os.Interrupt, os.Kill)
-	<-c
-	killChildren()
+	c := make(chan os.Signal, 1)
+	signal.Notify(c)
+	signal.Reset(syscall.SIGURG)
+	select {
+	case s := <-c:
+		forward(s.(syscall.Signal))
+	}
 }
 
-func killChildren() {
-	// work around for Darwin's lack of Pdeathsig support
-	// Pdeathsig: syscall.SIGKILL,
+func forward(s syscall.Signal) {
 	ch, e := children(os.Getpid())
 	if e == nil {
 		for _, pid := range ch {
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			_ = syscall.Kill(-pid, s)
 		}
 	}
 }
