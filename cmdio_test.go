@@ -18,6 +18,7 @@ package cmdio
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/user"
@@ -73,17 +74,20 @@ func bufOptions(in io.Reader, out, err io.Writer) func() *Options {
 	}
 }
 
-func run(script string, optFn func() *Options) *Info {
+func run(t *testing.T, script string, optFn func() *Options) *Info {
+	t.Helper()
 	return New(optFn).Run(Testdata + script)
 }
 
-func start(script string, optFn func() *Options) *Info {
+func start(t *testing.T, script string, optFn func() *Options) *Info {
+	t.Helper()
 	_, ctx := New(optFn).Start(Testdata + script)
 	info := <-ctx
 	return &info
 }
 
-func terminate(script string, optFn func() *Options) (*Info, error) {
+func terminate(t *testing.T, script string, optFn func() *Options) (*Info, error) {
+	t.Helper()
 	cmd := New(optFn)
 	started, ctx := cmd.Start(Testdata + script)
 	<-started
@@ -97,42 +101,55 @@ func terminate(script string, optFn func() *Options) (*Info, error) {
 }
 
 func TestRun(t *testing.T) {
-	info := run("program.sh", stdOptions)
-	assert.NoError(t, info.Error)
+	t.Run("basic_run", func(t *testing.T) {
+		info := run(t, "program.sh", stdOptions)
+		assert.NoError(t, info.Error)
+		assert.Equal(t, 0, info.Exit)
+		assert.True(t, info.Finished)
+	})
 }
 
 func TestReRun(t *testing.T) {
-	cmd := New(stdOptions)
-	info := cmd.Run(Testdata + "program.sh")
-	assert.NoError(t, info.Error)
-	info = cmd.Run(Testdata + "program.sh")
-	assert.Error(t, info.Error)
+	t.Run("cannot_reuse_cmdio", func(t *testing.T) {
+		cmd := New(stdOptions)
+		info := cmd.Run(Testdata + "program.sh")
+		assert.NoError(t, info.Error)
+		info = cmd.Run(Testdata + "program.sh")
+		assert.Error(t, info.Error)
+		assert.Contains(t, info.Error.Error(), "cannot reuse CmdIo")
+	})
 }
 
 func TestStart(t *testing.T) {
-	info := start("program.sh", stdOptions)
-	assertStart(t, info)
+	t.Run("async_start", func(t *testing.T) {
+		info := start(t, "program.sh", stdOptions)
+		assertStart(t, info)
+	})
 }
 
 func TestTerminate(t *testing.T) {
-	info, err := terminate("service.sh", stdOptions)
-	assert.NoError(t, err)
-	assertTerminate(t, info)
+	t.Run("terminate_running", func(t *testing.T) {
+		info, err := terminate(t, "service.sh", stdOptions)
+		assert.NoError(t, err)
+		assertTerminate(t, info)
+	})
 }
 
 func TestStartBufIO(t *testing.T) {
-	expected := "hello world\n"
-	in := stringReader{
-		step: 0,
-		data: []string{expected},
-	}
-	out := bytes.NewBufferString("")
-	err := bytes.NewBufferString("")
-	cmd := New(bufOptions(in, out, err))
-	info := cmd.Run(Testdata+"io.sh", "-")
-	assert.NoError(t, info.Error)
-	assert.Equal(t, expected, out.String())
-	assert.Equal(t, expected, err.String())
+	t.Run("io_redirection", func(t *testing.T) {
+		expected := "hello world\n"
+		in := stringReader{
+			step: 0,
+			data: []string{expected},
+		}
+		out := bytes.NewBufferString("")
+		err := bytes.NewBufferString("")
+		cmd := New(bufOptions(in, out, err))
+		info := cmd.Run(Testdata+"io.sh", "-")
+		assert.NoError(t, info.Error)
+		assert.Equal(t, expected, out.String())
+		assert.Equal(t, expected, err.String())
+	})
 }
 
 func assertTerminate(t *testing.T, info *Info) {
@@ -155,4 +172,67 @@ func assertStart(t *testing.T, info *Info) {
 		0,
 		info.Exit,
 		"should exit with 0")
+}
+
+func TestRunContext(t *testing.T) {
+	t.Run("context_cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		
+		cmd := New(stdOptions)
+		info := cmd.RunContext(ctx, Testdata+"service.sh")
+		
+		// Command should be terminated due to context timeout
+		assert.True(t, info.Signaled || info.Error != nil)
+	})
+	
+	t.Run("context_not_cancelled", func(t *testing.T) {
+		ctx := context.Background()
+		cmd := New(stdOptions)
+		info := cmd.RunContext(ctx, Testdata+"program.sh")
+		
+		assert.NoError(t, info.Error)
+		assert.Equal(t, 0, info.Exit)
+		assert.True(t, info.Finished)
+	})
+}
+
+func TestStartContext(t *testing.T) {
+	t.Run("start_with_context", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		
+		cmd := New(stdOptions)
+		started, complete := cmd.StartContext(ctx, Testdata+"service.sh")
+		
+		<-started
+		info := <-complete
+		
+		// Command should be terminated due to context timeout
+		assert.True(t, info.Signaled || info.Error != nil)
+	})
+}
+
+// Benchmarks
+func BenchmarkRun(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		cmd := New(stdOptions)
+		_ = cmd.Run(Testdata + "program.sh")
+	}
+}
+
+func BenchmarkStart(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		cmd := New(stdOptions)
+		_, complete := cmd.Start(Testdata + "program.sh")
+		<-complete
+	}
+}
+
+func BenchmarkRunContext(b *testing.B) {
+	ctx := context.Background()
+	for i := 0; i < b.N; i++ {
+		cmd := New(stdOptions)
+		_ = cmd.RunContext(ctx, Testdata+"program.sh")
+	}
 }
