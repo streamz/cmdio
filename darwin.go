@@ -1,5 +1,4 @@
 //go:build darwin
-// +build darwin
 
 /*
 Copyright © 2020 streamz <bytecodenerd@gmail.com>
@@ -22,12 +21,15 @@ package cmdio
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"unsafe"
 )
 
+// Darwin-specific process management constants.
+// Based on BSD kinfo_proc structure.
 // Copyright (c) 2014 Mitchell Hashimoto
 const (
 	ctrlKern        = 1
@@ -46,6 +48,7 @@ type kinfoProc struct {
 	_    [84]byte
 }
 
+// darwinSyscall retrieves process information using sysctl.
 func darwinSyscall() (*bytes.Buffer, error) {
 	mib := [4]int32{ctrlKern, kernProc, kernProcAll, 0}
 	size := uintptr(0)
@@ -80,10 +83,11 @@ func darwinSyscall() (*bytes.Buffer, error) {
 	return bytes.NewBuffer(bs[0:size]), nil
 }
 
+// children returns all child process IDs for the given parent process ID.
 func children(ppid int) ([]int, error) {
 	buf, err := darwinSyscall()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get process list: %w", err)
 	}
 
 	procs := make([]*kinfoProc, 0, 50)
@@ -92,7 +96,7 @@ func children(ppid int) ([]int, error) {
 		proc := &kinfoProc{}
 		err = binary.Read(bytes.NewBuffer(buf.Bytes()[k:i]), binary.LittleEndian, proc)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to read process info: %w", err)
 		}
 
 		k = i
@@ -117,7 +121,8 @@ func syscallAttrs(cred *syscall.Credential) *syscall.SysProcAttr {
 	}
 }
 
-// TODO: Pass ALL signals to child pids
+// signalHandler forwards signals to child processes.
+// Currently handles all signals except SIGURG.
 func signalHandler() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c)
@@ -128,6 +133,7 @@ func signalHandler() {
 	}
 }
 
+// forward sends the given signal to all child processes.
 func forward(s syscall.Signal) {
 	ch, e := children(os.Getpid())
 	if e == nil {
